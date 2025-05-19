@@ -18,7 +18,7 @@ def plot_signal(signal:np.ndarray,file:str,channel_name:str, save:bool=False, fp
     plt.xlabel('Data Points')
     plt.ylabel('Fluorescence Intensity')
     if save:
-        plt.savefig(fpath+f'{file}_{channel_name}.png')
+        plt.savefig(os.path.join(fpath, f'{file}_{channel_name}.png'), dpi=300)
         plt.close()
     else:
         plt.show()
@@ -33,13 +33,18 @@ def read_fsa_from_directory(dir):
         fsa_path = str(os.path.join(dir, fsa_file))
         green_channel, orange_channel = read_fsa(fsa_path)
 
-        save_dir='../Results/signal_plots/'
+        save_dir='./Results/signal_plots/'
+        # Create directory if it doesn't exist
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
         save_name=fsa_file.split('.')[0]
         plot_signal(green_channel,save_name,'green', True, save_dir)
         plot_signal(orange_channel,save_name,'orange', True, save_dir)
 
+def main():
+    # Example usage
+    #file="../Amplicon Length/Test Data/3.17.25 Promega (Redo) UCx #1 03052025/03052025-1A_20250317120227_3-5-25_UCx1_A1_01.fsa"
+    read_fsa_from_directory("../Amplicon Length/Test Data/3.17.25 Promega (Redo) UCx #1 03052025/")
 
-
-#file="../Amplicon Length/Test Data/3.17.25 Promega (Redo) UCx #1 03052025/03052025-1A_20250317120227_3-5-25_UCx1_A1_01.fsa"
-data_directory="../Amplicon Length/Test Data/3.17.25 Promega (Redo) UCx #1 03052025/"
-read_fsa_from_directory(data_directory)
+if __name__ == "__main__":
+    main()

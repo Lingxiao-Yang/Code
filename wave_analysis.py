@@ -55,9 +55,9 @@ class CapillaryPeakCalibrator:
         pk_height_orange: float = 200,
         pk_prom_orange: float = 150,
         pk_dist_orange: int = 30,
-        pk_height_green: float = 800,
-        pk_prom_green: float = 500,
-        pk_dist_green: int = 30,
+        pk_height_green: float = 1000,
+        pk_prom_green: float = 800,
+        pk_dist_green: int = 80,
         merge_distance: int = 80,
         allowed_bp_gap: int = 10,
         rmse_tol: float = 3.0,
@@ -99,9 +99,6 @@ class CapillaryPeakCalibrator:
         self._assign_green_bp()
         return self.orange_peaks, self.green_peaks
 
-    # ==================================================================
-    # -----------------------  internal helpers  -----------------------
-    # ==================================================================
     def _preprocess(self, trace):
         sm = uniform_filter1d(trace, self.smooth_win)
         baseline = uniform_filter1d(sm, self.baseline_win)
@@ -118,24 +115,11 @@ class CapillaryPeakCalibrator:
         )
         return idx.astype(int), props["peak_heights"]
 
-    # ------------------------------------------------------------------
-    # 1. detect & “clean” the orange ladder peaks
-    # ------------------------------------------------------------------
     def _align_orange_ladder(self):
         y_or = self._preprocess(self.orange)
         idx_all, h_all = self._detect_peaks(y_or, self.pk_height_orange,
                                             self.pk_prom_orange,
                                             self.pk_dist_orange)
-
-        # optional debug plot
-        if self.debug_dir:
-            os.makedirs(self.debug_dir, exist_ok=True)
-            fig, ax = plt.subplots(figsize=(18, 4))
-            ax.plot(y_or, c="orange")
-            ax.scatter(idx_all, h_all, c="red", zorder=3)
-            ax.set_title("Raw detected orange peaks")
-            fig.savefig(os.path.join(self.debug_dir, "orange_raw.png"))
-            plt.close(fig)
 
         # sort left→right
         idx = idx_all[np.argsort(idx_all)].tolist()

@@ -9,7 +9,7 @@ class AmpliconDataset:
 
     Workbook layout
     ---------------
-    • Sheet “Bacteria”   : names of the 189 bacteria in cells A1–A189
+    • Sheet “Bacteria”   : names of the 189 bacteria in cells A1-A189
     • Sheet “16s-23s”    : amplicon lengths for the 16S-23S rDNA region
     • Sheet “23s-5s”     : amplicon lengths for the 23S-5S rDNA region
     • Sheet “Thr-Tyr”    : amplicon lengths for the Thr-Tyr intergenic region

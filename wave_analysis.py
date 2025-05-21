@@ -23,15 +23,15 @@ class CapillaryPeakCalibrator:
     Parameters
     ----------
     orange, green : 1-D ndarray
-        Fluorescence traces of ladder and sample.
+        Intensity traces of ladder and sample.
     ladder_bp     : 1-D ndarray (ascending)
         The expected base-pair ladder (e.g. 68 values).
     smooth_win    : int
         Smoothing window width (default 5).
     baseline_win  : int
         Baseline-removal window (default 800).
-    pk_height / pk_prom / pk_dist : float | int
-        Thresholds passed to scipy.signal.find_peaks.
+    pk_height_orange / pk_prom_orange / pk_dist_orange / pk_height_green / pk_prom_green / pk_dist_green : float
+        Thresholds passed to scipy.signal.find_peaks()
     merge_distance : int
         Two peaks ≤ merge_distance samples apart are considered “close”.
     allowed_bp_gap : int
@@ -39,6 +39,8 @@ class CapillaryPeakCalibrator:
         that differ by ≤ allowed_bp_gap, they may be merged.
     rmse_tol : float
         Still used to sanity-check interpolation error (can stay small).
+    green_min_bp : int
+        Green peaks with bp < green_min_bp are discarded.
     debug_dir : str | None
         If not None, PNGs of detected peaks are saved here.
     """
@@ -50,12 +52,16 @@ class CapillaryPeakCalibrator:
         green,
         smooth_win: int = 5,
         baseline_win: int = 800,
-        pk_height: float = 200,
-        pk_prom: float = 150,
-        pk_dist: int = 30,
+        pk_height_orange: float = 200,
+        pk_prom_orange: float = 150,
+        pk_dist_orange: int = 30,
+        pk_height_green: float = 800,
+        pk_prom_green: float = 500,
+        pk_dist_green: int = 30,
         merge_distance: int = 80,
         allowed_bp_gap: int = 10,
         rmse_tol: float = 3.0,
+        green_min_bp: int = 80,
         debug_dir: str | None = None,
     ):
         self.orange = np.asarray(orange, dtype=float)
@@ -64,12 +70,19 @@ class CapillaryPeakCalibrator:
 
         self.smooth_win = smooth_win
         self.baseline_win = baseline_win
-        self.pk_height = pk_height
-        self.pk_prom = pk_prom
-        self.pk_dist = pk_dist
+
+        self.pk_height_orange = pk_height_orange
+        self.pk_prom_orange = pk_prom_orange
+        self.pk_dist_orange = pk_dist_orange
+
+        self.pk_height_green = pk_height_green
+        self.pk_prom_green = pk_prom_green
+        self.pk_dist_green = pk_dist_green
+
         self.merge_distance = merge_distance
         self.allowed_bp_gap = allowed_bp_gap
         self.rmse_tol = rmse_tol
+        self.green_min_bp = green_min_bp
         self.debug_dir = debug_dir
 
         # will be filled by run()
@@ -96,12 +109,12 @@ class CapillaryPeakCalibrator:
         sig[sig < 0] = 0
         return sig
 
-    def _detect_peaks(self, y):
+    def _detect_peaks(self, y, height, prominence, distance):
         idx, props = find_peaks(
             y,
-            height=self.pk_height,
-            prominence=self.pk_prom,
-            distance=self.pk_dist,
+            height=height,
+            prominence=prominence,
+            distance=distance,
         )
         return idx.astype(int), props["peak_heights"]
 
@@ -110,7 +123,9 @@ class CapillaryPeakCalibrator:
     # ------------------------------------------------------------------
     def _align_orange_ladder(self):
         y_or = self._preprocess(self.orange)
-        idx_all, h_all = self._detect_peaks(y_or)
+        idx_all, h_all = self._detect_peaks(y_or, self.pk_height_orange,
+                                            self.pk_prom_orange,
+                                            self.pk_dist_orange)
 
         # optional debug plot
         if self.debug_dir:
@@ -142,10 +157,12 @@ class CapillaryPeakCalibrator:
                     f"{self.ladder_bp[i]} bp and {self.ladder_bp[i+1]} bp "
                     f"(gap {bp_gap} > allowed {self.allowed_bp_gap})."
                 )
-            # merge → keep taller
-            keep_left = h[i] >= h[i + 1]
-            idx[i : i + 2] = [idx[i] if keep_left else idx[i + 1]]
-            h[i : i + 2] = [h[i] if keep_left else h[i + 1]]
+
+            # merge → take average of two peaks
+            avg_idx = int(round((idx[i] + idx[i + 1]) / 2))
+            avg_h = (h[i] + h[i + 1]) / 2
+            idx[i : i + 2] = [avg_idx]
+            h[i : i + 2] = [avg_h]
             if i:  # re-check previous pair
                 i -= 1
 
@@ -197,7 +214,10 @@ class CapillaryPeakCalibrator:
             raise RuntimeError("Run _align_orange_ladder() first.")
 
         y_gr = self._preprocess(self.green)
-        idx_g, h_g = self._detect_peaks(y_gr)
+        idx_g, h_g = self._detect_peaks(y_gr,
+                                        self.pk_height_green,
+                                        self.pk_prom_green,
+                                        self.pk_dist_green)
 
         # --- piece-wise linear interpolation inside ladder range ---
         bp_g = np.interp(idx_g, self.ladder_idx, self.ladder_bp)
@@ -227,6 +247,12 @@ class CapillaryPeakCalibrator:
                     self.ladder_bp[-1]
                     + slope_right * (idx_g[right_mask] - self.ladder_idx[-1])
                 )
+        
+        # --- remove green peaks with bp < threshold ----------------
+        mask = bp_g >= self.green_min_bp
+        idx_g = idx_g[mask]
+        h_g = h_g[mask]
+        bp_g = bp_g[mask]
 
         # store result as DataFrame
         self.green_peaks = pd.DataFrame(

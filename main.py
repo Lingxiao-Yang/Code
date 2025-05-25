@@ -3,15 +3,19 @@ import os
 import pandas as pd
 from collections import defaultdict
 from pathlib import Path
+from typing import Any, List, Dict
 
 from data_parser import read_fsa
 from wave_analysis import CapillaryPeakCalibrator
 from amplicon_dataset import AmpliconDataset
+from amplicon_classifier import AmpliconClassifier
 
 DATA_DIR = "./Amplicon Length/Test Data/3.17.25 Promega (Redo) UCx #1 03052025/"
 AMPLICON_DIR = "./Amplicon Length/Final Amplicon Profile.xlsx"
 DEBUG_DIR = "./debug/"
 STEM_RE = re.compile(r"^(.*?-\d+)([ABC])_(.*)$")
+
+REGION_MAP = {"A": "16s23s", "B": "23s5s", "C": "ThrTyr"}
 
 def stem_parts(stem: str):
     """Return (batch_key, replicate_letter, tail) or (None, None, None)."""
@@ -21,66 +25,98 @@ def stem_parts(stem: str):
     return None, None, None
 
 # ───────────────────────────── main ────────────────────────────────
+def _bp_list(peaks: Any) -> List[int]:
+    """
+    Accepts
+        • list / tuple / numpy array
+        • pd.Series
+        • pd.DataFrame (must contain a “bp” column)
+    Returns
+        Sorted list[int] with NaNs removed.
+    """
+    if peaks is None:
+        return []
+    if isinstance(peaks, pd.DataFrame):
+        arr = peaks["bp"].values
+    elif isinstance(peaks, pd.Series):
+        arr = peaks.values
+    else:                          # list, tuple, ndarray …
+        arr = peaks
+    return sorted(int(x) for x in arr if pd.notna(x))
+
+
+# ----------------------------------------------------------------------
+#  Main pipeline
+# ----------------------------------------------------------------------
 def main() -> None:
-    # load reference profiles
     amplicon_dataset = AmpliconDataset(AMPLICON_DIR)
 
-    batches = defaultdict(list)
+    # -------- group all .fsa files into “batches” ----------------------
+    batches: Dict[str, List[str]] = defaultdict(list)
     for fname in sorted(f for f in os.listdir(DATA_DIR) if f.endswith(".fsa")):
         stem = Path(fname).stem
         batch_key, _, _ = stem_parts(stem)
         key = batch_key if batch_key else stem
         batches[key].append(fname)
 
+    # ------------------------------------------------------------------
     for batch_key, batch_files in batches.items():
         batch_files.sort()
         if len(batch_files) != 3:
             print(f"Warning: batch '{batch_key}' has {len(batch_files)} file(s); expected 3.")
 
         print(f"\nProcessing batch {batch_key}: {', '.join(batch_files)}")
+
+        # ---- collect green-channel peak tables from all three runs ----
+        batch_results: Dict[str, pd.DataFrame] = {}
         for fsa_file in batch_files:
             stem = Path(fsa_file).stem
             dash_idx = stem.find('-')
-            if dash_idx != -1:
-                replicate_subfolder = stem[dash_idx + 1:]
-            else:
-                replicate_subfolder = stem
+            replicate_subfolder = stem[dash_idx + 1:] if dash_idx != -1 else stem
 
-            batch_key, _, _ = stem_parts(stem)
-            if not batch_key:
-                batch_key = stem.split('-', 1)[0]
+            batch_key2, repl_letter, _ = stem_parts(stem)
+            if not batch_key2:
+                batch_key2 = stem.split('-', 1)[0]
+            region_tag = REGION_MAP.get(repl_letter, "unknown")
 
-            debug_dir = os.path.join(DEBUG_DIR, batch_key, replicate_subfolder)
+            debug_dir = os.path.join(DEBUG_DIR, batch_key2, replicate_subfolder)
+            fsa_path  = os.path.join(DATA_DIR, fsa_file)
 
-            fsa_path = os.path.join(DATA_DIR, fsa_file)
             green_channel, orange_channel = read_fsa(fsa_path)
 
             calibrator = CapillaryPeakCalibrator(
                 orange    = orange_channel,
                 green     = green_channel,
                 debug_dir = debug_dir,
+                region    = region_tag,
             )
 
-            # orange_peaks and green_peaks are in form pd.DataFrame(dict(idx, height, bp)) after run()
-            orange_peaks = green_peaks = None
             try:
-                orange_peaks, green_peaks = calibrator.run()
+                _, green_peaks = calibrator.run()          # → DataFrame(idx, height, bp)
+                batch_results[region_tag] = green_peaks
             except RuntimeError as e:
                 print(f"Calibration failed for {fsa_file}: {e}")
 
-            # Save orange and green peaks to debug directory
-            os.makedirs(debug_dir, exist_ok=True)
-            output_path = os.path.join(debug_dir, f"{stem}_peaks.xlsx")
-            with pd.ExcelWriter(output_path) as writer:
-                orange_peaks.to_excel(writer, sheet_name="Orange Peaks", index=False)
-                green_peaks.to_excel(writer, sheet_name="Green Peaks", index=False)
+        # ---- show test peaks (for debugging) --------------------------
+        print("  Detected green peaks (bp):")
+        for region, peaks_df in batch_results.items():
+            print(f"    {region:9s}: {_bp_list(peaks_df)}")
+
+        # ---- rank candidate bacteria ---------------------------------
+        clf = AmpliconClassifier(amplicon_dataset)
+        candidates = clf.rank(batch_results, top_k=5)
+
+        print("\n  Top matches:")
+        for bacterium, score in candidates:
+            print(f"    {bacterium:30s}  −log L = {score:.2f}")
+            # print reference profile for each region
+            for reg in ("16s-23s", "23s-5s", "Thr-Tyr"):
+                ref_bp = amplicon_dataset.get_profile(bacterium, region=reg)
+                print(f"        {reg:9s}: {ref_bp}")
+        print("-" * 72)
+
 
     print("\nCalibration completed for all batches.\n")
-
-    # ----------------------------- quick dataset check --------------------------
-    print("Dataset Test:")
-    print(amplicon_dataset["Alteromonas tetraodonis"])
-    print(amplicon_dataset.get_profile("Alteromonas tetraodonis", region="16s-23s"))
 
 if __name__ == "__main__":
     main()

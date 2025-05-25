@@ -43,6 +43,9 @@ class CapillaryPeakCalibrator:
         Green peaks with bp < green_min_bp are discarded.
     debug_dir : str | None
         If not None, PNGs of detected peaks are saved here.
+    region : str
+        Region name (e.g. "16s-23s") for this sample.
+        Green peaks < 50 bp or > 200 bp are discarded.
     """
 
     # ------------------------------------------------------------------
@@ -63,6 +66,7 @@ class CapillaryPeakCalibrator:
         rmse_tol: float = 3.0,
         green_min_bp: int = 80,
         debug_dir: str | None = None,
+        region: str = "16s-23s",
     ):
         self.orange = np.asarray(orange, dtype=float)
         self.green = np.asarray(green, dtype=float)
@@ -84,6 +88,7 @@ class CapillaryPeakCalibrator:
         self.rmse_tol = rmse_tol
         self.green_min_bp = green_min_bp
         self.debug_dir = debug_dir
+        self.region = region
 
         # will be filled by run()
         self.ladder_idx = None          # np.ndarray, length == len(ladder_bp)
@@ -97,6 +102,15 @@ class CapillaryPeakCalibrator:
         """Full pipeline: ladder alignment → green bp assignment."""
         self._align_orange_ladder()
         self._assign_green_bp()
+
+        # Save orange and green peaks to debug directory if requested
+        if self.debug_dir is not None:
+            os.makedirs(self.debug_dir, exist_ok=True)
+            output_path = os.path.join(self.debug_dir, f"Numerical Values.xlsx")
+            with pd.ExcelWriter(output_path) as writer:
+                self.orange_peaks.to_excel(writer, sheet_name="Orange Peaks", index=False)
+                self.green_peaks.to_excel(writer, sheet_name="Green Peaks", index=False)
+
         return self.orange_peaks, self.green_peaks
 
     def _preprocess(self, trace):
@@ -237,6 +251,13 @@ class CapillaryPeakCalibrator:
         idx_g = idx_g[mask]
         h_g = h_g[mask]
         bp_g = bp_g[mask]
+        
+        # remove green peaks for region Thr-Tyr < 50 bp or > 200 bp
+        if self.region == "ThrTyr":
+            mask = (bp_g >= 50) & (bp_g <= 200)
+            idx_g = idx_g[mask]
+            h_g = h_g[mask]
+            bp_g = bp_g[mask]
 
         # store result as DataFrame
         self.green_peaks = pd.DataFrame(

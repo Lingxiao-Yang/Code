@@ -1,6 +1,5 @@
 from pathlib import Path
 from typing import Dict, List, Optional
-
 import pandas as pd
 
 class AmpliconDataset:
@@ -80,5 +79,5 @@ class AmpliconDataset:
     def __repr__(self):
         return (
             f"{self.__class__.__name__}("
-            f"{len(self.bacteria_names)} bacteria × {len(self._REGION_SHEETS)} regions)"
+            f"{len(self.bacteria_names)} bacteria * {len(self._REGION_SHEETS)} regions)"
         )

@@ -1,5 +1,7 @@
 import re
 import os
+
+import numpy as np
 import pandas as pd
 from collections import defaultdict
 from pathlib import Path
@@ -136,6 +138,41 @@ def main() -> None:
                 ref_bp = amplicon_dataset.get_profile(bacterium, region=reg)
                 print(f"        {reg:9s}: {ref_bp}")
         print("-" * 72)
+
+        # ---- Find best parameters ----------------------
+        '''best_tol = 0
+        best_miss_penalty = 0
+        best_extra_penalty = 0
+        best_region_weights = {}
+        best_score=100000000
+        best_candidates = []
+        tols=[5,8,10]
+        miss_penalties=[100.0]#np.linspace(30.0, 100.0, 10)
+        extra_penalties=[30.0]#np.linspace(30.0, 100.0, 10)
+        region_weightss = [{"16s-23s": 1.0, "23s-5s": 1.0, "Thr-Tyr": 1.0},{"16s-23s": 1.0, "23s-5s": 0.7, "Thr-Tyr": 0.3},{ "16s-23s": 1.0, "23s-5s": 0.5, "Thr-Tyr": 0.3}]
+        for tol in tols:
+            for miss_penalty in miss_penalties:
+                for extra_penalty in extra_penalties:
+                    for region_weights in region_weightss:
+                        clf = AmpliconClassifier(amplicon_dataset, miss_penalty=miss_penalty, extra_penalty=extra_penalty,region_weights=region_weights)
+                        candidates = clf.rank(batch_results, top_k=1)
+                        nll_score=0
+                        for bacterium, score in candidates:
+                            nll_score += score
+                        nll_score /= len(candidates)
+                        if nll_score < best_score:
+                            best_score = nll_score
+                            best_tol = tol
+                            best_miss_penalty = miss_penalty
+                            best_extra_penalty = extra_penalty
+                            best_region_weights = region_weights
+                            best_candidates = candidates[0][0]
+        print(f'Best parameters for batch {batch_key}: tol={best_tol}, miss_penalty={best_miss_penalty}, extra_penalty={best_extra_penalty}, region_weights={best_region_weights}, mean_nll={best_score}')
+        print(f'Best candidate(s) for batch {batch_key}: {best_candidates}')
+        for reg in ("16s-23s", "23s-5s", "Thr-Tyr"):
+            ref_bp = amplicon_dataset.get_profile(best_candidates, region=reg)
+            print(f"        {reg:9s}: {ref_bp}")
+        print('-' * 72)'''
 
 
     print("\nCalibration completed for all batches.\n")

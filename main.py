@@ -16,6 +16,16 @@ DEBUG_DIR = "./debug/"
 STEM_RE = re.compile(r"^(.*?-\d+)([ABC])_(.*)$")
 
 REGION_MAP = {"A": "16s23s", "B": "23s5s", "C": "ThrTyr"}
+REGION_KEY = {"16s23s": "16s-23s", "23s5s": "23s-5s", "ThrTyr": "Thr-Tyr"}
+
+GT_ORG = {
+    1: "Escherichia coli",
+    2: "Staphylococcus aureus",
+    3: "Escherichia coli",
+    4: "Escherichia coli",
+    5: "Enterobacter cloacae",
+    6: "Enterococcus faecalis",
+}
 
 def stem_parts(stem: str):
     """Return (batch_key, replicate_letter, tail) or (None, None, None)."""
@@ -101,6 +111,18 @@ def main() -> None:
         print("  Detected green peaks (bp):")
         for region, peaks_df in batch_results.items():
             print(f"    {region:9s}: {_bp_list(peaks_df)}")
+        
+        try:
+            sample_idx = int(batch_key.split('-')[-1])
+        except ValueError:
+            sample_idx = None
+
+        if sample_idx in GT_ORG:
+            org_name = GT_ORG[sample_idx]
+            print(f"  Ground Truth: {org_name}")
+            for reg in ("16s-23s", "23s-5s", "Thr-Tyr"):
+                ref_bp = amplicon_dataset.get_profile(org_name, region=reg)
+                print(f"        {reg:9s}: {ref_bp}")
 
         # ---- rank candidate bacteria ---------------------------------
         clf = AmpliconClassifier(amplicon_dataset)
@@ -108,7 +130,7 @@ def main() -> None:
 
         print("\n  Top matches:")
         for bacterium, score in candidates:
-            print(f"    {bacterium:30s}  −log L = {score:.2f}")
+            print(f"    {bacterium:30s}  -log L = {score:.2f}")
             # print reference profile for each region
             for reg in ("16s-23s", "23s-5s", "Thr-Tyr"):
                 ref_bp = amplicon_dataset.get_profile(bacterium, region=reg)

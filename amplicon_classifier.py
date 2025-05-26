@@ -44,7 +44,7 @@ class AmpliconClassifier:
         dataset: "AmpliconDataset",
         tol: int = 5,
         miss_penalty: float = 100.0,
-        extra_penalty: float = 30.0,
+        extra_penalty: float = 70.0,
         region_weights: Dict[str, float] | None = None,
     ):
         self.ds = dataset

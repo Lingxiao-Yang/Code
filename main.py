@@ -128,7 +128,7 @@ def main() -> None:
 
         # ---- rank candidate bacteria ---------------------------------
         clf = AmpliconClassifier(amplicon_dataset)
-        candidates = clf.rank(batch_results, top_k=5)
+        candidates = clf.rank(batch_results, top_k=10)
 
         print("\n  Top matches:")
         for bacterium, score in candidates:

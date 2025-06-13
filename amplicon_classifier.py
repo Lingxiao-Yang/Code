@@ -43,8 +43,8 @@ class AmpliconClassifier:
         self,
         dataset: "AmpliconDataset",
         tol: int = 5,
-        miss_penalty: float = 100.0,
-        extra_penalty: float = 70.0,
+        miss_penalty: float = 120.0,
+        extra_penalty: float = 60.0,
         region_weights: Dict[str, float] | None = None,
     ):
         self.ds = dataset
@@ -52,56 +52,68 @@ class AmpliconClassifier:
         self.miss_penalty = miss_penalty
         self.extra_penalty = extra_penalty
 
-        default_w = {"16s-23s": 1.0, "23s-5s": 0.7, "Thr-Tyr": 0.3}
+        default_w = {"16s-23s": 1.0, "23s-5s": 0.3, "Thr-Tyr": 0.1}
         self.w = default_w if region_weights is None else region_weights
+
+    def _collapse_close(self, peaks: np.ndarray, tol: float) -> np.ndarray:
+        """
+        Group any sorted peaks where successive entries differ by ≤ tol,
+        and replace each group by its mean.
+        """
+        if peaks.size == 0:
+            return peaks
+        peaks = np.sort(peaks)
+        groups = [[peaks[0]]]
+        for p in peaks[1:]:
+            if p - groups[-1][-1] <= tol:
+                groups[-1].append(p)
+            else:
+                groups.append([p])
+        reps = [float(np.mean(g)) for g in groups]
+        return np.asarray(reps, dtype=np.float32)
 
     def _region_distance(
         self,
         test: List[int],
         ref:  List[int],
-        sigma: float = 4.0,
+        sigma: float = 10.0,
         noise_floor: float = 1e-3,
     ) -> float:
-        """
-        Negative average log-likelihood **plus**
-        • miss_penalty   for each expected band not seen,
-        • extra_penalty  for each test band ≥ σ away from *all* reference bands.
-        """
         test = np.asarray(test, dtype=np.float32)
         ref  = np.asarray(ref,  dtype=np.float32)
 
-        # ---------------- edge cases ------------------------------------
+        # --- cluster close peaks, then remove exact duplicates ---
+        test = self._collapse_close(test, sigma)
+        test = np.unique(test)
+        ref  = self._collapse_close(ref,  sigma)
+        ref  = np.unique(ref)
+
+        # ------------- edge cases -------------
         if test.size == 0 and ref.size == 0:
             return 0.0
         if ref.size == 0:
-            return self.extra_penalty * test.size          # all peaks are “extra”
+            return self.extra_penalty * test.size
         if test.size == 0:
-            return self.miss_penalty * ref.size            # all bands missing
+            return self.miss_penalty * ref.size
 
         inv_2s2  = 1.0 / (2 * sigma * sigma)
-        log_norm = -log(sigma * sqrt(2 * pi))
+        log_norm = -log(sigma * sqrt(2 * np.pi))
 
-        # log pdf matrix  (m × n)
-        logpdf = (
-            log_norm
-            - (test[:, None] - ref[None, :]) ** 2 * inv_2s2
-        )
+        # --- Gaussian mixture log-pdf ---
+        logpdf = log_norm - (test[:, None] - ref[None, :])**2 * inv_2s2
+        log_p  = logsumexp(logpdf, axis=1) - log(ref.size)
+        log_p  = np.logaddexp(log_p, log(noise_floor))
+        nll    = -log_p.mean()
 
-        # mixture log-prob for each test peak
-        log_p = logsumexp(logpdf, axis=1) - log(ref.size)
-        log_p = np.logaddexp(log_p, log(noise_floor))       # protect against −∞
-        nll   = -log_p.mean()                               # average −log L
-
-        # --------------- penalties --------------------------------------
-        # (1) missing reference bands
+        # --- miss penalties ---
         min_d_ref = np.min(np.abs(ref[:, None] - test[None, :]), axis=1)
         missed    = (min_d_ref > sigma).sum()
-        nll += self.miss_penalty * missed / (ref.size + 1e-6)
+        nll      += self.miss_penalty * missed / (ref.size + 1e-6)
 
-        # (2) unexpected test peaks
+        # --- extra penalties ---
         min_d_test = np.min(np.abs(test[:, None] - ref[None, :]), axis=1)
         extras     = (min_d_test > sigma).sum()
-        nll += self.extra_penalty * extras / (test.size + 1e-6)
+        nll       += self.extra_penalty * extras / (test.size + 1e-6)
 
         return float(nll)
 

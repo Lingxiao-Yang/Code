@@ -17,14 +17,19 @@ from amplicon_classifier import AmpliconClassifier
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ──────────────────────────────────────────────────────────────────────────────
-DATA_ROOT    = Path("./Amplicon Length/Test Data/")
+DATA_ROOT    = Path("./Amplicon Length/Test Data")
 AMPLICON_XLS = "./Amplicon Length/Final Amplicon Profile.xlsx"
 DEBUG_ROOT   = Path("./debug/")
 
 REGION_MAP   = {"A": "16s23s", "B": "23s5s", "C": "ThrTyr"}
 REGION_KEY   = {"16s23s": "16s-23s", "23s5s": "23s-5s", "ThrTyr": "Thr-Tyr"}
 
-_SAMPLE_PATTERN = re.compile(r"(\d+)([ABC])", re.IGNORECASE)
+BACTERIUM_KEY={
+    "E. coli": "Escherichia coli",
+    "Staph aureus": "Staphylococcus aureus",
+}
+
+_SAMPLE_PATTERN = re.compile(r"(\d+)([ABCabc]|_(16s-23s|23s-5s|thr-tyr))", re.IGNORECASE)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -151,6 +156,8 @@ def process_subfolder(subfolder: Path, ds: AmpliconDataset) -> None:
                 idx = None
             if idx and idx in id_map:
                 org = id_map[idx]
+                if org in BACTERIUM_KEY:
+                    org = BACTERIUM_KEY[org]
                 print(f"  Ground truth sample {idx}: {org}")
                 for short, nice in REGION_KEY.items():
                     try:

@@ -11,5 +11,6 @@ wheels/
 .DS_Store
 /Amplicon Length/
 /debug/
+/debug_melt/
 .idea
 /Thermosleuth gen3 simulation/

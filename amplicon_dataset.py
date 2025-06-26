@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import pandas as pd
 
-class AmpliconDataset:
+class TemplateDataset:
     """
     Load and serve bacterial amplicon-profile data stored in an Excel workbook.
 
@@ -16,7 +16,7 @@ class AmpliconDataset:
     Example
     -------
     >>> ds = AmpliconDataset("amplicon_profiles.xlsx")
-    >>> ds["Yersinia pestis"]
+    >>> ds[]
     {'16s-23s': [728, 980, 1050],
      '23s-5s' : [],
      'Thr-Tyr': [482]}
@@ -52,10 +52,13 @@ class AmpliconDataset:
                 df = df.reindex(range(189))
 
             for idx, (name, row) in enumerate(zip(names, df.itertuples(index=False))):
-                values = [int(x) for x in row if pd.notna(x)]
+                values = [self._convert(x) for x in row if pd.notna(x)]
                 self._data[name][region] = values
 
         self.bacteria_names: List[str] = names
+
+    def _convert(self, value: object):
+        raise NotImplementedError
 
     def get_profile(
         self, name: str, region: Optional[str] = None
@@ -81,3 +84,7 @@ class AmpliconDataset:
             f"{self.__class__.__name__}("
             f"{len(self.bacteria_names)} bacteria * {len(self._REGION_SHEETS)} regions)"
         )
+
+class AmpliconDataset(TemplateDataset):
+    def _convert(self, x):
+        return int(x)

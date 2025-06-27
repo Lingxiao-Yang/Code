@@ -55,9 +55,9 @@ class CapillaryPeakCalibrator:
         green,
         smooth_win: int = 5,
         baseline_win: int = 800,
-        pk_height_orange: float = 200,
-        pk_prom_orange: float = 150,
-        pk_dist_orange: int = 30,
+        pk_height_orange: float = 100,
+        pk_prom_orange: float = 80,
+        pk_dist_orange: int = 20,
         pk_height_green: float = 1500,
         pk_prom_green: float = 1000,
         pk_dist_green: int = 80,
@@ -165,9 +165,27 @@ class CapillaryPeakCalibrator:
                 i -= 1
 
         if len(idx) != len(self.ladder_bp):
+            if self.debug_dir is not None:
+                os.makedirs(self.debug_dir, exist_ok=True)
+                fig, axs = plt.subplots(2, 1, figsize=(18, 8), sharex=True)
+                # First subplot: no ylim
+                axs[0].plot(y_or, c="orange")
+                axs[0].scatter(idx, h, c="red", zorder=3)
+                for i, p in enumerate(idx):
+                    axs[0].text(p, h[i], f"{self.ladder_bp[i]:.0f}", ha="center", va="bottom")
+                axs[0].set_title("Orange peaks with bp ladder (no ylim)")
+                # Second subplot: ylim 0-3000
+                axs[1].plot(y_or, c="orange")
+                axs[1].set_ylim(0, 3000)
+                axs[1].scatter(idx, h, c="red", zorder=3)
+                for i, p in enumerate(idx):
+                    axs[1].text(p, h[i], f"{self.ladder_bp[i]:.0f}", ha="center", va="bottom")
+                axs[1].set_title("Orange peaks with bp ladder (ylim 0-3000)")
+                fig.savefig(os.path.join(self.debug_dir, "orange_peaks_debug.png"))
+                plt.close(fig)
             raise RuntimeError(
-                f"Ladder mismatch: expected {len(self.ladder_bp)} peaks, "
-                f"found {len(idx)} after merging."
+            f"Ladder mismatch: expected {len(self.ladder_bp)} peaks, "
+            f"found {len(idx)} after merging."
             )
 
         idx = np.asarray(idx)
@@ -182,6 +200,24 @@ class CapillaryPeakCalibrator:
         interp_bp = np.interp(idx, idx, self.ladder_bp)
         rmse = np.sqrt(((interp_bp - self.ladder_bp) ** 2).mean())
         if rmse > self.rmse_tol:
+            if self.debug_dir is not None:
+                os.makedirs(self.debug_dir, exist_ok=True)
+                fig, axs = plt.subplots(2, 1, figsize=(18, 8), sharex=True)
+                # First subplot: no ylim
+                axs[0].plot(y_or, c="orange")
+                axs[0].scatter(idx, h, c="red", zorder=3)
+                for i, p in enumerate(idx):
+                    axs[0].text(p, h[i], f"{self.ladder_bp[i]:.0f}", ha="center", va="bottom")
+                axs[0].set_title("Orange peaks with bp ladder (sanity check failed, no ylim)")
+                # Second subplot: ylim 0-3000
+                axs[1].plot(y_or, c="orange")
+                axs[1].set_ylim(0, 3000)
+                axs[1].scatter(idx, h, c="red", zorder=3)
+                for i, p in enumerate(idx):
+                    axs[1].text(p, h[i], f"{self.ladder_bp[i]:.0f}", ha="center", va="bottom")
+                axs[1].set_title("Orange peaks with bp ladder (sanity check failed, ylim 0-3000)")
+                fig.savefig(os.path.join(self.debug_dir, "orange_peaks_sanity_check.png"))
+                plt.close(fig)
             raise RuntimeError(
                 f"Interpolation sanity RMSE {rmse:.2f} bp > tol {self.rmse_tol}."
             )

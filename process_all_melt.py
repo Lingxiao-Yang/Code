@@ -1,3 +1,4 @@
+
 import re
 import os
 import sys
@@ -16,7 +17,8 @@ from wave_analysis import CapillaryPeakCalibrator
 from amplicon_dataset import AmpliconDataset
 from amplicon_classifier import AmpliconClassifier
 
-
+# NEW: melt tiebreaker (all three regions)
+from melt_classifier import MeltCurveResolver, CANON_REGIONS
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -24,6 +26,9 @@ from amplicon_classifier import AmpliconClassifier
 DATA_ROOT    = Path("./Amplicon Length/Test Data/")
 AMPLICON_XLS = "./Amplicon Length/Final Amplicon Profile.xlsx"
 DEBUG_ROOT   = Path("./debug/")
+
+# path to simulated melt dataset root (containing xlsx + region folders)
+MELT_DS_ROOT = Path("Amplicon Length/Melt Dataset/")
 
 REGION_MAP   = {"A": "16s23s", "B": "23s5s", "C": "ThrTyr"}
 REGION_KEY   = {"16s23s": "(16s-23s)", "23s5s": "(23s-5s)", "ThrTyr": "(Thr-Tyr)"}
@@ -98,6 +103,30 @@ def extract_peaks(fsa_path: Path) -> Union[Tuple[str, pd.DataFrame], None]:
         return None
 
 
+def _load_melt_derivative_sheet(xlsx: Path) -> Union[pd.DataFrame, None]:
+    try:
+        return pd.read_excel(xlsx, sheet_name="Derivative")
+    except Exception:
+        return None
+
+
+def _lookup_exp_derivative(df_d: pd.DataFrame, sample_key: str, canon_region: str) -> Tuple[np.ndarray, np.ndarray] | Tuple[None, None]:
+    """
+    Given the 'Derivative' sheet dataframe, return (temps, values) for a sample id
+    and canonical region name like '16s-23s'.
+    """
+    if df_d is None or "Temperature" not in df_d.columns:
+        return None, None
+    suffix = f"({canon_region})"
+    cols = [c for c in df_d.columns if str(c).strip().startswith(str(sample_key)) and str(c).strip().endswith(suffix)]
+    if not cols:
+        return None, None
+    col = cols[0]
+    temps = np.asarray(df_d["Temperature"].values, dtype=float)
+    vals = np.asarray(df_d[col].values, dtype=float)
+    return temps, vals
+
+
 def process_subfolder(
     subfolder: Path,
     ds,  # AmpliconDataset
@@ -105,9 +134,13 @@ def process_subfolder(
     top_k: int = 10
 ) -> None:
     try:
+        # new: prepare melt resolver & derivative sheet if present
+        xlsx_files = list(subfolder.glob("*.xlsx"))
+        df_derivative = _load_melt_derivative_sheet(xlsx_files[0]) if xlsx_files else None
+        melt_resolver = MeltCurveResolver(MELT_DS_ROOT)
+
         # 1) Pre-scan qPCR with 80% of NTC max threshold
         dumped: Dict[Tuple[str, str], bool] = {}
-        xlsx_files = list(subfolder.glob("*.xlsx"))
         if xlsx_files:
             wb = xlsx_files[0]
             try:
@@ -139,7 +172,7 @@ def process_subfolder(
                             dumped[key] = True
                             print(f"  [DUMPED qPCR] Sample {key[0]} {suffix}: Ct_sample={Ct_s} >= Ct_NTC={Ct_NTC}")
 
-        # 2) Plot qPCR & Derivative with bold controls
+        # 2) Plot qPCR & Derivative with bold controls (same look as process_all.py)
         group_suffixes = list(REGION_KEY.values())
         for xlsx in xlsx_files:
             out_dir = DEBUG_ROOT / subfolder.name
@@ -279,9 +312,51 @@ def process_subfolder(
                     print(f"{indent}{region}:")
                     for name, score in candidates:
                         ref_peaks = clf._to_bp_list(ds.get_profile(name, region))
-                        name = safe(name)
-                        print(f"{indent}  {name:25s} -log L = {score:7.2f} | ref: {ref_peaks}")
+                        name_print = safe(name)
+                        print(f"{indent}  {name_print:25s} -log L = {score:7.2f} | ref: {ref_peaks}")
                 print("-" * 60)
+
+                # ── NEW: multi‑region melt-curve tiebreaker if ambiguous
+                final_region, final_level = pyramid[-1]
+                top_score = final_level[0][1]
+                thresh = top_score * (1.0 + close_pct)
+                close_cands = [n for n, s in final_level if s <= thresh]
+
+                if len(close_cands) > 1 and df_derivative is not None:
+                    exp_curves = {}
+                    for canon in CANON_REGIONS:
+                        t, y = _lookup_exp_derivative(df_derivative, str(sample_key), canon)
+                        if t is not None and y is not None:
+                            exp_curves[canon] = (t, y)
+
+                    if exp_curves:
+                        out_dir = DEBUG_ROOT / subfolder.name / f"melt_{sample_key}_ALL"
+                        title = f"Melt comparison S{sample_key} (ALL REGIONS)"
+                        best, per_region_metrics, aggregate = melt_resolver.score_multi_region(
+                            exp_region_curves=exp_curves,
+                            candidate_names=close_cands,
+                            out_root=out_dir,
+                            title_prefix=title
+                        )
+                        print(f"  [MELT] Multi-region tiebreaker among {len(close_cands)} candidates:")
+                        for region, metrics in per_region_metrics.items():
+                            print(f"    Region {region}:")
+                            for n in close_cands:
+                                m = metrics.get(n)
+                                if m is None:
+                                    print(f"      {n:25s}: (no simulated curve)")
+                                else:
+                                    print(f"      {n:25s}: r={m.pearson_r: .4f}, cosine={m.cosine: .4f}, RMSE={m.rmse: .4f}")
+                        print("    Aggregate Pearson sum across regions:")
+                        for n, v in aggregate.items():
+                            print(f"      {n:25s}: sum_r={v: .4f}")
+                        if best:
+                            print(f"  [MELT] Winner by aggregated correlation → {best}")
+                        else:
+                            print("  [MELT] Could not resolve tie (no usable metrics).")
+                    else:
+                        print("  [MELT] No experimental derivative curves found in any region.")
+
             except Exception as e:
                 print(f"!! Error during classification for sample {sample_key}: {e}")
                 traceback.print_exc()

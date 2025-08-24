@@ -1,6 +1,7 @@
 import re
 import os
 import sys
+import datetime
 import traceback
 from pathlib import Path
 from collections import defaultdict
@@ -14,14 +15,13 @@ from tqdm import tqdm
 from data_parser import read_fsa
 from wave_analysis import CapillaryPeakCalibrator
 from amplicon_dataset import AmpliconDataset
-from amplicon_classifier import AmpliconClassifier
-
+from multi_classifier import AmpliconClassifier
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ──────────────────────────────────────────────────────────────────────────────
-DATA_ROOT    = Path("./Amplicon Length/Test Data/")
+DATA_ROOT    = Path("./Amplicon Length/Polymicrobial")
 AMPLICON_XLS = "./Amplicon Length/Final Amplicon Profile.xlsx"
 DEBUG_ROOT   = Path("./debug/")
 
@@ -52,18 +52,46 @@ def group_by_sample(fsa_paths: List[Path]) -> Dict[str, List[Path]]:
     return batches
 
 
-def read_identities(folder: Path) -> Dict[int, str]:
+def _split_org_list(text: str) -> List[str]:
+    """
+    Split a right-hand-side like:
+      'S stimulans (CoNS)'
+      'Morganella morganii, Klebsiella pneumoniae, S caprae'
+      'A and B, C'
+    into a list of organism strings (preserving any parentheses/qualifiers).
+    """
+    # First split on commas, then split any leftover ' and ' within parts
+    parts = []
+    for chunk in re.split(r",", text):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        parts.extend([c.strip() for c in re.split(r"\band\b", chunk) if c.strip()])
+    # Normalize internal whitespace
+    parts = [re.sub(r"\s+", " ", p) for p in parts]
+    return parts
+
+
+def read_identities(folder: Path) -> Dict[int, List[str]]:
+    """
+    Reads ground truth file allowing multiple organisms per sample:
+      e.g. 'Sample 2 = Morganella morganii, Klebsiella pneumoniae, S caprae'
+    Returns: {2: ['Morganella morganii', 'Klebsiella pneumoniae', 'S caprae'], ...}
+    """
     for fn in ("Sample identities.txt", "identities.txt"):
         f = folder / fn
         if f.is_file():
-            out = {}
-            for line in f.read_text().splitlines():
-                if "=" not in line:
+            out: Dict[int, List[str]] = {}
+            for raw in f.read_text().splitlines():
+                if "=" not in raw:
                     continue
-                left, right = [s.strip() for s in line.split("=", 1)]
+                left, right = [s.strip() for s in raw.split("=", 1)]
                 m = re.search(r"(\d+)$", left)
-                if m:
-                    out[int(m.group(1))] = right
+                if not m:
+                    continue
+                idx = int(m.group(1))
+                org_list = _split_org_list(right)
+                out[idx] = org_list
             return out
     return {}
 
@@ -96,6 +124,19 @@ def extract_peaks(fsa_path: Path) -> Union[Tuple[str, pd.DataFrame], None]:
     except Exception as e:
         print(f"  ! Calibration error for {fsa_path.name}: {e}")
         return None
+
+
+def _set_metrics(pred: List[str], truth: List[str]) -> Tuple[float, float, float, List[str], List[str], List[str]]:
+    """Simple multi-label set metrics."""
+    pset, tset = set(pred), set(truth)
+    tp = len(pset & tset)
+    prec = tp / max(len(pset), 1)
+    rec  = tp / max(len(tset), 1)
+    if prec + rec == 0:
+        f1 = 0.0
+    else:
+        f1 = 2 * prec * rec / (prec + rec)
+    return prec, rec, f1, sorted(pset & tset), sorted(pset - tset), sorted(tset - pset)
 
 
 def process_subfolder(
@@ -230,6 +271,9 @@ def process_subfolder(
         batches = group_by_sample(valid)
         id_map = read_identities(subfolder)
 
+        # per-folder summary
+        summary_rows = []
+
         for sample_key, paths in sorted(batches.items(), key=lambda x: int(x[0])):
             print(f"\n--- {subfolder.name} / Sample {sample_key} ({len(paths)} files) ---")
             results: Dict[str, pd.DataFrame] = {}
@@ -257,36 +301,124 @@ def process_subfolder(
             for region, peaks in results.items():
                 print(f"    {region:9s}: {peaks}")
 
-            # Ground-truth lookup
+            # Ground-truth lookup (multi-label)
             idx = int(sample_key)
-            if idx in id_map:
-                org = id_map[idx]
-                print(f"  Ground truth for sample {idx}: {org}")
+            truth_list: List[str] = id_map.get(idx, [])
+            if truth_list:
+                print(f"  Ground truth for sample {idx}: {truth_list}")
                 for region in AmpliconClassifier.REGIONS:
-                    try:
-                        profile = ds.get_profile(org, region)
-                        print(f"    {region:9s}: {profile}")
-                    except Exception as e:
-                        print(f"    ! Error loading {region}: {e}")
+                    for org in truth_list:
+                        try:
+                            profile = ds.get_profile(org, region)
+                            print(f"    {region:9s} [{org}]: {profile}")
+                        except Exception as e:
+                            print(f"    ! Error loading {region} for '{org}': {e}")
 
             # Classification pyramid
             try:
-                clf = AmpliconClassifier(ds)
-                pyramid = clf.iterative_rank(results, close_pct=close_pct, top_k=top_k)
-                print("  Classification pyramid:")
+                def _safe(x):
+                    try:
+                        return safe(x)
+                    except NameError:
+                        return str(x)
+
+                clf = AmpliconClassifier(ds, tol=5, sigma=10, bin_size=2, region_weights={"16s-23s": 1.0, "23s-5s": 0.3, "Thr-Tyr": 0.1})
+
+                # --- 1) Single-organism pyramid (print for visibility) ---
+                pyr_close_pct, pyr_top_k = 0.2, 10
+                pyramid = clf.iterative_rank(results, close_pct=pyr_close_pct, top_k=pyr_top_k)
+                print("  Classification pyramid (single-organism):")
                 for level, (region, candidates) in enumerate(pyramid):
                     indent = '    ' + '  ' * level
                     print(f"{indent}{region}:")
                     for name, score in candidates:
                         ref_peaks = clf._to_bp_list(ds.get_profile(name, region))
-                        name = safe(name)
-                        print(f"{indent}  {name:25s} -log L = {score:7.2f} | ref: {ref_peaks}")
+                        print(f"{indent}  {_safe(name):25s} -log L = {score:7.2f} | ref: {ref_peaks}")
                 print("-" * 60)
+
+                # --- 2) Email-driven AUTO: iterative likelihood → CS(equal weights ≤5) ---
+                #     NOTE: weights are forced to 1/k in mixture mode; also returns binary presence.
+                auto = clf.classify_auto_v2(
+                    results,
+                    likelihood_thresh=0.60,
+                    beta=0.2,
+                    solver="ksparse",
+                    k_max=3,
+                    prune_tol=1e-3,
+                    improvement_min=0.15,
+                    region_weights={"16s-23s": 1.0, "23s-5s": 0.3, "Thr-Tyr": 0.3},
+                )
+                decision   = auto["decision"]
+                used_regs  = auto["used_regions"]
+
+                print(f"AUTO v2 decision: {decision}")
+                if decision["mode"] == "single":
+                    single_name = auto["decision"]["label"]
+                    single_prob = auto["iterative"]["prob"]
+                    single_res  = auto["iterative"]["residual_rel"]
+                    print(f"  Single: {single_name} | likelihood={single_prob:.2%} | residual={single_res:.4f}")
+                    pred_list = [single_name] if single_name else []
+                    resid_mix = None
+                else:
+                    mix = auto["mixture"]
+                    resid_mix = mix["residual_rel"]
+                    conf_mix  = mix["confidence"]
+                    eq_weights = mix["weights"]  # equal weights 1/k
+                    print(f"  Mixture (equal weights) residual={resid_mix:.4f} | confidence≈{conf_mix:.2f}")
+                    for name, w in eq_weights:
+                        print(f"    {_safe(name):30s} {w*100:6.2f}%")
+                    pred_list = [n for n, _ in eq_weights]
+
+                    # Also show union of component peaks per region
+                    print("  Union of component peaks per region:")
+                    for region in used_regs:
+                        union = []
+                        for n, _ in eq_weights:
+                            union.extend(clf._to_bp_list(ds.get_profile(n, region)))
+                        union_arr = np.asarray(sorted(union), dtype=np.float32)
+                        union_collapsed = list(clf._collapse_close(union_arr, clf.tol)) if len(union_arr) else []
+                        print(f"    {region:7s}: {union_collapsed}")
+
+                # --- 3) Multi-label metrics vs ground truth (if available) ---
+                prec = rec = f1 = np.nan
+                tp_names = fp_names = fn_names = []
+                if truth_list:
+                    prec, rec, f1, tp_names, fp_names, fn_names = _set_metrics(pred_list, truth_list)
+                    print(f"  Metrics vs GT  -> P={prec:.2f} R={rec:.2f} F1={f1:.2f}")
+                    if tp_names: print(f"    TP: {tp_names}")
+                    if fp_names: print(f"    FP: {fp_names}")
+                    if fn_names: print(f"    FN: {fn_names}")
+
+                # collect summary row
+                summary_rows.append({
+                    "folder": subfolder.name,
+                    "sample": int(sample_key),
+                    "mode": decision["mode"],
+                    "single_label": decision.get("label"),
+                    "mixture_residual": resid_mix,
+                    "iterative_prob": auto["iterative"]["prob"] if auto["iterative"] else None,
+                    "pred_components": "; ".join(pred_list),
+                    "gt_components": "; ".join(truth_list),
+                    "precision": prec,
+                    "recall": rec,
+                    "f1": f1,
+                    "tp": "; ".join(tp_names),
+                    "fp": "; ".join(fp_names),
+                    "fn": "; ".join(fn_names),
+                })
+
             except Exception as e:
                 print(f"!! Error during classification for sample {sample_key}: {e}")
                 traceback.print_exc()
 
             print("-" * 60)
+
+        # write summary CSV for this subfolder
+        if summary_rows:
+            df_sum = pd.DataFrame(summary_rows).sort_values(["folder", "sample"])
+            out_csv = DEBUG_ROOT / subfolder.name / "summary.csv"
+            df_sum.to_csv(out_csv, index=False)
+            print(f"Saved folder summary: {out_csv}")
 
     except Exception as e:
         print(f"!! Unhandled error in process_subfolder: {e}")

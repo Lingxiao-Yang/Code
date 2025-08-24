@@ -76,6 +76,14 @@ class AmpliconDataset:
     def __getitem__(self, name: str):
         return self.get_profile(name)
 
+    def __len__(self):
+        """Return the number of bacteria in the dataset."""
+        return len(self.bacteria_names)
+
+    def size(self):
+        """Return the size of the dataset (number of bacteria)."""
+        return len(self.bacteria_names)
+
     def __repr__(self):
         return (
             f"{self.__class__.__name__}("

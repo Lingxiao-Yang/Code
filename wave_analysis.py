@@ -62,7 +62,7 @@ class CapillaryPeakCalibrator:
         pk_prom_green: float = 1000,
         pk_dist_green: int = 80,
         merge_distance: int = 80,
-        allowed_bp_gap: int = 10,
+        allowed_bp_gap: int = 20,
         rmse_tol: float = 3.0,
         green_min_bp: int = 80,
         debug_dir: str | None = None,

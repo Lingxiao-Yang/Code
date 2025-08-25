@@ -76,6 +76,22 @@ The AmpliconDataset class loads bacterial reference data from an Excel workbook 
 - 23S-5S rDNA regions
 - Thr-Tyr intergenic regions
 
+## Test Data Naming Pattern
+
+FSA files in `Amplicon Length/Test Data/` are expected to follow this naming pattern:
+
+```
+XX-NNNA_description.fsa
+```
+- `XX-NNN` is the batch identifier
+- `A`, `B`, or `C` is the replicate letter (region indicator)
+- `description` is additional metadata
+
+Example:
+```
+03052025-1A_20250317120227_3-5-25_UCx1_A1_01.fsa
+```
+
 ## Data Structure
 
 The code expects FSA files to follow a naming pattern like `XX-NNNA_description.fsa` where:
@@ -115,3 +131,54 @@ The calibration process generates:
 
 - Excel files with peak data (position, height, base pair size)
 - Diagnostic plots showing detected peaks on both channels
+
+## Directory Structure
+
+```
+Code/
+│
+├── amplicon_classifier.py
+├── amplicon_dataset.py
+├── data_parser.py
+├── debug/
+│   ├── 3.17.25 Promega (Redo) UCx #1 03052025/
+│   ├── 3.19.25 Promega - UCx #2 03102025/
+│   ├── ... (other debug output folders)
+│   └── UCx_03122025 - FSA files/
+├── main.py
+├── melt_classifier.py
+├── melt_dataset.py
+├── melt_parser.py
+├── multi_classifier.py
+├── process_all.py
+├── process_all_melt.py
+├── pyproject.toml
+├── README.md
+├── uv.lock
+├── wave_analysis.py
+├── Amplicon Length/
+│   ├── BacteriaDatabase FASTA and RefSeq Files.xlsx
+│   ├── Final Amplicon Profile.xlsx
+│   ├── Test Data/
+│   │   ├── 3.17.25 Promega (Redo) UCx #1 03052025/
+│   │   ├── 3.19.25 Promega - UCx #2 03102025/
+│   │   ├── ... (other test data folders)
+│   │   └── UCx_03122025 - FSA files/
+│   ├── Melt Dataset/
+│   │   ├── 16s-23s_New_Universal/
+│   │   ├── Gen3_Primers_Unpooled_23s-5s/
+│   │   ├── Gen3_Primers_Unpooled_Thr-Tyr/
+│   │   ├── 16s23s_New_Universal.csv
+│   │   ├── Gen3_Primers_Unpooled_23s-5s.csv
+│   │   ├── Gen3_Primers_Unpooled_Thr-Tyr.csv
+│   │   ├── reference_strand_16s-23s.xml
+│   │   ├── reference_strand_23s-5s.xml
+│   │   ├── reference_strand_Thr-Tyr.xml
+│   │   └── Supplementary File - Gen3 Primers Unpooled melt_array__sequences.xlsx
+│   ├── diabetic_soft_tissue_07072025_-_promega_raw_data/
+│   ├── Melt Raw Fluorescence/
+│   ├── Melt_-_Simulation/
+│   ├── Polymicrobial/
+│   └── ... (other folders/files)
+└── __pycache__/
+```
